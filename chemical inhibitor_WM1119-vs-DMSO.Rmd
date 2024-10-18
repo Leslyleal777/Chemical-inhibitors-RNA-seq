@@ -1,0 +1,227 @@
+---
+title: "Chem-inhibitor_WM1119 vs DMSO"
+author: "LL"
+date: "2024-10-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+#Libraries and load in Data
+
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(pkgbuild) ##load pkgbuild
+library(DESeq2) ##Load in Deseq library
+
+countdata <-read_excel("C:/Users/leall/OneDrive/KAT6A Inhibitor small dataset/KAT6A-inhibitors-controlNPC-CountMatrix_AN008D_221228 (1).xlsx")
+countdata <- as.data.frame(countdata)
+row.names(countdata) <- countdata[,1]
+countdata <- countdata[,-1]
+
+coldata <- data.frame(read_excel("C://Users//leall//Box//_Arboleda Lab Stuff//personal//Lesly_Leal//KAT6A Inhibitor small dataset//KAT6A-inhibitors-controlNPC-colData-sampleINFO_AN008D_221228.xlsx"))
+
+rownames(coldata)<-coldata[,1]
+coldata<-coldata[,-1]
+
+countdata<-data.frame(countdata)
+```
+
+
+```{r}
+#filter Countdata and Coldata for only WM119 + DMSO
+drugdata <- countdata %>%
+  dplyr::select(matches("WM1119|DMSO"))
+
+filtered_coldata <- coldata %>%
+  filter(Drug == "WM1119" | str_starts(Drug, "DMSO"))
+
+countdata<- drugdata
+coldata <- filtered_coldata
+
+```
+
+
+```{r}
+all(colnames(countdata)== rownames(coldata))
+#convert data to factors
+
+coldata$timept <- factor(coldata$timept)
+coldata$condition <- factor(coldata$condition)
+coldata$Line <- factor(coldata$Line)
+coldata$Dosage <- factor(coldata$Dosage)
+coldata$Drug <- factor(coldata$Drug)
+
+```
+
+
+```{r}
+#Run DESeq2 (design conditions include, Line(FIbro or PBMCs), Drug (DMSO or WM1119), Timept(24H or 96H)))
+
+dds<-DESeqDataSetFromMatrix(countData = countdata,colData = coldata,design = ~ timept + Line + Drug )
+
+dds<-DESeq(dds)
+
+plotDispEsts(dds)
+```
+
+
+```{r}
+rld<-rlog(dds,blind = TRUE)
+#making fancy pca with labels 
+#this is to plot the points on the PCA from DESeq2 with sample names on them
+pcaData<-plotPCA(rld,intgroup=c("condition", "Line", "timept", "Drug"),returnData=TRUE)
+percentVar<-round(100*attr(pcaData,"percentVar"))
+pcaData<-merge(x=pcaData,y=coldata,by=0)
+
+library(ggplot2)
+library(ggrepel)
+ggplot(pcaData, aes(PC1, PC2, color=condition.x, shape= timept.x,label=name)) +
+  geom_point(size=3) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()
+```
+```{r}
+#make sure correct libraries are loaded
+library(apeglm)
+
+```
+
+
+```{r}
+
+resultsNames(dds)
+res<-lfcShrink(dds, coef="Drug_WM1119_vs_DMSO",type="apeglm")
+
+res_unshrunken <- results(dds, name="Drug_WM1119_vs_DMSO")
+summary(res_unshrunken)
+
+```
+
+
+```{r}
+gencode_genes<-read.csv("C:\\Users\\leall\\Downloads\\gencode.v31.primary_assembly.genes.csv")
+#gencode_genes<-read.csv("/Users/angelawei/Box Sync/_Arboleda Lab Stuff/personal/Angela_Wei/Reference_genome/GencodeV31_GR38/gencode.v31.primary_assembly.genes.csv")
+gencode_genes<-dplyr::select(gencode_genes,gene_name,gene_type,seqnames,hgnc_id,gene_id)
+hcng_ref<-read.delim("C:\\Users\\leall\\Downloads\\HCNG_05-09-19.txt")
+#hcng_ref<-read.delim("/Users/angelawei/Box Sync/_Arboleda Lab Stuff/personal/Angela_Wei/Reference_genome/HCNG/HCNG_05-09-19.txt")
+hcng_ref<-dplyr::select(hcng_ref,HGNC.ID,Approved.name,Chromosome,RefSeq.IDs,OMIM.ID.supplied.by.OMIM.)
+#https://github.com/hbctraining/DGE_workshop/blob/master/lessons/05_DGE_DESeq2_analysis2.md
+#convert results from DESeq2 object to data frame and convert rownames to gene column
+res<- res %>%
+  data.frame() %>%
+  as_tibble()
+
+#this dataframe will be one the hold all the extra info (norm counts, HGNC name, chr, etc)
+#now add hgnc_id, gene_name, chr,gene_type
+res<-merge(res,gencode_genes,all.x=TRUE)
+#now add hgnc stuff
+res<-merge(res,hcng_ref,all.x=TRUE,by.x="hgnc_id",by.y="HGNC.ID")
+#now order by padj
+final_res<-res%>%
+  filter(padj<0.05)%>%
+  #filter(abs(log2FoldChange)>0.6)%>%
+  arrange(desc(abs(log2FoldChange)))
+#write.csv(final_res,"sigDEGs FC1.5 Issy ASXL1 blood all samples adjGender.csv")
+hist(final_res$log2FoldChange)
+
+```
+
+
+```{r}
+###################################### gene count plots for DEGs ############################# 
+library(ggplot2)
+library(ggrepel)
+n<-100
+for (i in 1:n) {
+  geneCounts<-plotCounts(dds,gene = as.character(final_res[i,"gene_id"]),intgroup = c("Drug", "timept", "Line"),returnData = TRUE) ##################################
+  geneCounts<-geneCounts%>%
+    rownames_to_column(var="sampleName")
+  if(is.na(final_res[i,"Approved.name.x"])==TRUE){
+    ggplot(geneCounts, aes(x=condition,y=count,color=condition))+
+      geom_point(position=position_jitter(w = 0.1,h = 0),size=3) +
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+            panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+      ggtitle( paste0(final_res[i,"gene_id"], " normalized counts")) +
+      geom_text_repel(aes(label = sampleName),color="black")+
+      ylab("Normalized counts")+
+      labs(subtitle = paste0("log2FC= ",final_res[i,"log2FoldChange"], " , padj=",final_res[i,"padj"]))
+    ggsave(file.path(paste0(getwd(),"/normalizedCounts_DEGs/",i,"-",final_res[i,"gene_id"],".png")),
+           plot=last_plot(),device = "png",dpi=300)
+  }
+  else{
+    ggplot(geneCounts, aes(x=condition,y=count,color=condition))+
+      geom_point(position=position_jitter(w = 0.1,h = 0),size=3) +
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+            panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+      ggtitle( paste0(final_res[i,"gene_name"], ": ",final_res[i,"Approved.name.x"], " normalized counts")) +
+      geom_text_repel(aes(label = sampleName),color="black")+
+      ylab("Normalized counts")+
+      labs(subtitle = paste0("log2FC= ",final_res[i,"log2FoldChange"], ", padj=",final_res[i,"padj"]))
+    ggsave(file.path(paste0(getwd(),"/normalizedCounts_DEGs/",i,"-",gsub("/","_",as.character(final_res[i,"gene_name"])),"-",gsub("/","_",as.character(final_res[i,"Approved.name"])),".png")),
+           plot=last_plot(),device = "png",dpi=300)
+  }
+}
+```
+
+
+```{r}
+
+#now we need the normalized counts
+normalized_counts <- counts(dds,normalized=TRUE) %>%
+  data.frame() %>%
+  rownames_to_column(var="gene_id")
+#get the n most sig DEGs by padj
+#https://github.com/hbctraining/DGE_workshop/blob/master/lessons/06_DGE_visualizing_results.md
+n<-nrow(final_res)
+topNDEGs<-final_res %>%
+  #arrange(padj) %>%
+  arrange(desc(abs(log2FoldChange)))%>%
+  pull(gene_id) %>%
+  head(n)
+#get the normalized counts for the  sig DEGs
+topNDEGs_counts<-normalized_counts %>%
+  filter(gene_id %in% topNDEGs)%>%
+  column_to_rownames(var="gene_id")
+meta <- coldata%>%
+  rownames_to_column(var="sampleName") %>%
+  as_tibble()
+#make a heat map based on normalized counts of the top 300 DEGs based on lfc
+library(pheatmap)
+annotation <- meta %>%
+  dplyr::select(sampleName,Drug) %>%
+  data.frame(row.names = "sampleName")
+rownames(annotation)<-colnames(normalized_counts)[2:ncol(normalized_counts)]
+#color palette
+library(RColorBrewer)
+heat_colors <- brewer.pal(6, "YlGnBu")
+#THIS IS A HEAT MAP OF Z-SCORES OF NORMALIZED COUNTS!!
+pheatmap(topNDEGs_counts,
+         color = heat_colors,
+         cluster_rows = T, 
+         show_rownames = F,
+         annotation = annotation, 
+         border_color = NA, 
+         fontsize = 10, 
+         scale = "row", 
+         fontsize_row = 10, 
+         height = 20)
+
+#don't need these variables anymore
+rm(normalized_counts,n,topNDEGs,topNDEGs_counts,meta,annotation,heat_colors)
+
+```
+
+```{r}
+
+  
+```
+
