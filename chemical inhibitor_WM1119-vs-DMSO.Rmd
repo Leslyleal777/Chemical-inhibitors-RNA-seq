@@ -17,6 +17,7 @@ library(tidyverse)
 library(readxl)
 library(dplyr)
 library(pkgbuild) ##load pkgbuild
+
 library(DESeq2) ##Load in Deseq library
 
 countdata <-read_excel("C:/Users/leall/OneDrive/KAT6A Inhibitor small dataset/KAT6A-inhibitors-controlNPC-CountMatrix_AN008D_221228 (1).xlsx")
