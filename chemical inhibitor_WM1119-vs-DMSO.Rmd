@@ -8,6 +8,16 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+```{r}
+
+#install.packages("matrixStats") didnt work (keeps installing old version, need to force install new one)
+
+install.packages("https://cran.r-project.org/src/contrib/Archive/matrixStats/matrixStats_0.60.1.tar.gz", repos = NULL, type = "source")
+
+BiocManager::install("DESeq2")
+
+.libPaths(c("~/R/library", .libPaths()))
+```
 
 ## R Markdown
 ```{r}
@@ -17,15 +27,14 @@ library(tidyverse)
 library(readxl)
 library(dplyr)
 library(pkgbuild) ##load pkgbuild
-
 library(DESeq2) ##Load in Deseq library
 
-countdata <-read_excel("C:/Users/leall/OneDrive/KAT6A Inhibitor small dataset/KAT6A-inhibitors-controlNPC-CountMatrix_AN008D_221228 (1).xlsx")
+countdata <-read_excel("KAT6A-inhibitors-controlNPC-CountMatrix_AN008D_221228 (2).xlsx")
 countdata <- as.data.frame(countdata)
 row.names(countdata) <- countdata[,1]
 countdata <- countdata[,-1]
 
-coldata <- data.frame(read_excel("C://Users//leall//Box//_Arboleda Lab Stuff//personal//Lesly_Leal//KAT6A Inhibitor small dataset//KAT6A-inhibitors-controlNPC-colData-sampleINFO_AN008D_221228.xlsx"))
+coldata <- data.frame(read_excel("KAT6A-inhibitors-controlNPC-colData-sampleINFO_AN008D_221228.xlsx"))
 
 rownames(coldata)<-coldata[,1]
 coldata<-coldata[,-1]
@@ -44,6 +53,9 @@ filtered_coldata <- coldata %>%
 
 countdata<- drugdata
 coldata <- filtered_coldata
+
+view(countdata)
+view(coldata)
 
 ```
 
@@ -64,11 +76,13 @@ coldata$Drug <- factor(coldata$Drug)
 ```{r}
 #Run DESeq2 (design conditions include, Line(FIbro or PBMCs), Drug (DMSO or WM1119), Timept(24H or 96H)))
 
+
 dds<-DESeqDataSetFromMatrix(countData = countdata,colData = coldata,design = ~ timept + Line + Drug )
 
 dds<-DESeq(dds)
 
-plotDispEsts(dds)
+dispersion_graph <-plotDispEsts(dds)
+
 ```
 
 
@@ -92,27 +106,36 @@ ggplot(pcaData, aes(PC1, PC2, color=condition.x, shape= timept.x,label=name)) +
 ```
 ```{r}
 #make sure correct libraries are loaded
-library(apeglm)
+#library(apeglm)
 
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+# Install apeglm using BiocManager
+BiocManager::install("apeglm")
+
+library(apeglm)
 ```
 
 
 ```{r}
-
 resultsNames(dds)
 res<-lfcShrink(dds, coef="Drug_WM1119_vs_DMSO",type="apeglm")
-
-res_unshrunken <- results(dds, name="Drug_WM1119_vs_DMSO")
-summary(res_unshrunken)
-
 ```
 
 
 ```{r}
-gencode_genes<-read.csv("C:\\Users\\leall\\Downloads\\gencode.v31.primary_assembly.genes.csv")
+```
+
+
+```{r}
+
+gencode_genes<-read.csv("gencode.v31.primary_assembly.genes.csv")
+
 #gencode_genes<-read.csv("/Users/angelawei/Box Sync/_Arboleda Lab Stuff/personal/Angela_Wei/Reference_genome/GencodeV31_GR38/gencode.v31.primary_assembly.genes.csv")
 gencode_genes<-dplyr::select(gencode_genes,gene_name,gene_type,seqnames,hgnc_id,gene_id)
-hcng_ref<-read.delim("C:\\Users\\leall\\Downloads\\HCNG_05-09-19.txt")
+hcng_ref<-read.delim("HCNG_05-09-19.txt")
+
 #hcng_ref<-read.delim("/Users/angelawei/Box Sync/_Arboleda Lab Stuff/personal/Angela_Wei/Reference_genome/HCNG/HCNG_05-09-19.txt")
 hcng_ref<-dplyr::select(hcng_ref,HGNC.ID,Approved.name,Chromosome,RefSeq.IDs,OMIM.ID.supplied.by.OMIM.)
 #https://github.com/hbctraining/DGE_workshop/blob/master/lessons/05_DGE_DESeq2_analysis2.md
