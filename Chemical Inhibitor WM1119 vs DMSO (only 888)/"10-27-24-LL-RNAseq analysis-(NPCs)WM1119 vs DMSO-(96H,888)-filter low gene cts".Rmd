@@ -1,0 +1,91 @@
+---
+title: "10-27-24-LL-RNAseq analysis-(NPCs)WM1119 vs DMSO-(96H,888)-filter low gene cts"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("~/RNA_seq_KAT6Ainhibitor_small_dataset/Chemical Inhibitor WM1119 vs DMSO (only 888)")
+
+#Libraries and load in Data
+
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(pkgbuild) ##load pkgbuild
+library(DESeq2) ##Load in Deseq library
+
+countdata <-read_excel("KAT6A-inhibitors-controlNPC-CountMatrix_AN008D_221228 (1).xlsx")
+  
+countdata <- as.data.frame(countdata)
+row.names(countdata) <- countdata[,1]
+countdata <- countdata[,-1]
+
+coldata <- data.frame(read_excel("KAT6A-inhibitors-controlNPC-colData-sampleINFO_AN008D_221228.xlsx"))
+
+rownames(coldata)<-coldata[,1]
+coldata<-coldata[,-1]
+
+countdata<-data.frame(countdata)
+```
+```{r}
+# Filter data for 96H, 888 line, and either WM1119 or DMSO
+filtered_data <- subset(coldata, timept == "96H" & Line == "888" & Drug %in% c("WM1119", "DMSO"))
+
+# Categorize dosage into High and Low for WM1119 samples only
+filtered_data$DosageCategory <- ifelse(
+  filtered_data$Drug == "WM1119" & filtered_data$Dosage %in% c("1700nM", "850nM", "425nM"), "High",
+  ifelse(filtered_data$Drug == "WM1119" & filtered_data$Dosage %in% c("106nM", "213nM"), "Low", "Control")
+)
+
+# Remove any WM1119 samples that do not have a high or low dosage, if necessary
+filtered_data <- subset(filtered_data, !is.na(DosageCategory))
+
+# Create a new combined variable for DESeq design
+filtered_data$Drug_Dosage <- with(filtered_data, ifelse(Drug == "WM1119", paste(Drug, DosageCategory, sep = "_"), Drug))
+
+# Convert to factor
+filtered_data$Drug_Dosage <- factor(filtered_data$Drug_Dosage, levels = c("DMSO", "WM1119_Low", "WM1119_High"))
+
+# View the filtered data
+head(filtered_data)
+```
+
+
+```{r}
+# Filter the count matrix to include only columns (samples) that are in filtered_data$sampleID
+countdata_filtered<- countdata[, colnames(countdata) %in% filtered_data$sampleID]
+
+# Ensure order of columns in count_matrix_filtered matches the order in filtered_data$sampleID
+countdata_filtered <- countdata_filtered[, match(filtered_data$sampleID, colnames(countdata_filtered))]
+
+
+view(countdata_filtered)
+
+```
+
+```{r}
+coldata <- filtered_data
+countdata<- countdata_filtered
+```
+`
+
+```{r}
+dds<-DESeqDataSetFromMatrix(countData = countdata, colData = coldata, design = ~ Drug)
+
+dds<-DESeq(dds)
+
+
+
+```
+
+
+```{r}
+dispersion_graph <-plotDispEsts(dds)
+
+```
+
+

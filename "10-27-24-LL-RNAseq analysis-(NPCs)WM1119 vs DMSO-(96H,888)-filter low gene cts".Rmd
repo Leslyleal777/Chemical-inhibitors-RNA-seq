@@ -76,6 +76,18 @@ countdata<- countdata_filtered
 ```{r}
 dds<-DESeqDataSetFromMatrix(countData = countdata, colData = coldata, design = ~ Drug)
 
+dds
+
+#Filter low gene counts
+
+keep <- rowSums(counts(dds)) >= 10
+dds <-dds[keep,]
+dds
+
+#set factor level
+dds$Drug <- relevel(dds$Drug, ref = "DMSO")
+
+#run DESeq
 dds<-DESeq(dds)
 
 
@@ -84,8 +96,383 @@ dds<-DESeq(dds)
 
 
 ```{r}
+#make Dispersion graph
 dispersion_graph <-plotDispEsts(dds)
 
 ```
+```{r}
+#make pca
+rld<-rlog(dds,blind = TRUE)
+#making fancy pca with labels 
+#this is to plot the points on the PCA from DESeq2 with sample names on them
+pcaData<-plotPCA(rld,intgroup=c("Drug"),returnData=TRUE)
+percentVar<-round(100*attr(pcaData,"percentVar"))
+pcaData<-merge(x=pcaData,y=coldata,by=0)
+library(ggplot2)
+library(ggrepel)
+ggplot(pcaData, aes(PC1, PC2, color=Drug_Dosage, shape=Drug.x ,label=name)) +
+  geom_point(size=3) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()
+```
+```{r}
+#get more than PC1 and PC2
+#DESeq2 defaults to using the top 500 most variable gene 
+morePCs<-function (object, intgroup =c("Drug"), ntop = 500, returnData = FALSE,firstPC,secondPC) 
+{
+  #object is the log2 transformed version of the gene count table 
+  rv <- rowVars(assay(object))
+  #pick out the ntop (default 500) genes with the most variable expression
+  select <- order(rv, decreasing = TRUE)[seq_len(min(ntop, 
+                                                     length(rv)))]
+  #subset the log2 transformed values to the ntop most variable gene expression and compute PCs
+  pca <- prcomp(t(assay(object)[select, ]))
+  #this variable is the percent explained by the chosen PCs
+  percentVar <- pca$sdev^2/sum(pca$sdev^2)
+  if (!all(intgroup %in% names(colData(object)))) {
+    stop("the argument 'intgroup' should specify columns of colData(dds)")
+  }
+  intgroup.df <- as.data.frame(colData(object)[, intgroup, 
+                                               drop = FALSE])
+  group <- if (length(intgroup) > 1) {
+    factor(apply(intgroup.df, 1, paste, collapse = ":"))
+  }
+  else {
+    colData(object)[[intgroup]]
+  }
+  d <- data.frame(PC1 = pca$x[, firstPC], PC2 = pca$x[, secondPC], group = group, 
+                  intgroup.df, name = colnames(object))
+  if (returnData) {
+    attr(d, "percentVar") <- percentVar[firstPC:secondPC]
+    return(d)
+  }
+  ggplot(data = d, aes_string(x = "PC1", y = "PC2", 
+                              color = "group")) + geom_point(size = 3) + xlab(paste0("PC",firstPC,": ", 
+                                                                                     round(percentVar[1] * 100), "% variance")) + ylab(paste0("PC",secondPC,": ", 
+                                                                                                                                              round(percentVar[2] * 100), "% variance")) + coord_fixed()
+}
 
+
+
+```
+
+```{r}
+library(apeglm)
+
+resultsNames(dds)
+res<-lfcShrink(dds, coef= "Drug_WM1119_vs_DMSO",type="apeglm")
+```
+
+```{r}
+
+gencode_genes<-read.csv("~/RNA_seq_KAT6Ainhibitor_small_dataset/gencode.v31.primary_assembly.genes.csv")
+
+#gencode_genes<-read.csv("/Users/angelawei/Box Sync/_Arboleda Lab Stuff/personal/Angela_Wei/Reference_genome/GencodeV31_GR38/gencode.v31.primary_assembly.genes.csv")
+
+gencode_genes<-dplyr::select(gencode_genes,gene_name,gene_type,seqnames,hgnc_id,gene_id)
+
+#view(gencode_genes)
+hcng_ref<-read.delim("~/RNA_seq_KAT6Ainhibitor_small_dataset/HCNG_05-09-19.txt")
+
+#hcng_ref<-read.delim("/Users/angelawei/Box Sync/_Arboleda Lab Stuff/personal/Angela_Wei/Reference_genome/HCNG/HCNG_05-09-19.txt")
+hcng_ref<-dplyr::select(hcng_ref,HGNC.ID,Approved.name,Chromosome,RefSeq.IDs,OMIM.ID.supplied.by.OMIM.)
+#https://github.com/hbctraining/DGE_workshop/blob/master/lessons/05_DGE_DESeq2_analysis2.md
+#convert results from DESeq2 object to data frame and convert rownames to gene column
+res<- res %>%
+  data.frame() %>%
+  rownames_to_column(var="gene_id") %>%
+  as_tibble()
+
+#view(res)
+
+#this dataframe will be one the hold all the extra info (norm counts, HGNC name, chr, etc)
+#now add hgnc_id, gene_name, chr,gene_type
+res<-merge(res,gencode_genes,all.x=TRUE)
+#now add hgnc stuff
+res<-merge(res,hcng_ref,all.x=TRUE,by.x="hgnc_id",by.y="HGNC.ID")
+#now order by padj
+final_res<-res%>%
+  filter(padj<0.05)%>%
+  #filter(abs(log2FoldChange)>0.6)%>%
+  arrange(desc(abs(log2FoldChange)))
+#write.csv(final_res,"sigDEGs FC1.5 Issy ASXL1 blood all samples adjGender.csv")
+hist(final_res$log2FoldChange)
+
+
+```
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+n <- 100
+
+for (i in 1:n) {
+  gene_id <- as.character(final_res[i, "gene_id"])
+  
+  # Check if the gene exists in the dds object
+  if (gene_id %in% rownames(dds)) {
+    # Proceed with plotCounts
+    geneCounts <- plotCounts(dds, gene = gene_id, intgroup = c("Drug"), returnData = TRUE)
+    geneCounts <- geneCounts %>% rownames_to_column(var = "sampleName")
+    
+    # Sanitize gene names for file saving
+    safe_gene_id <- gsub("[^[:alnum:]_]", "_", gene_id)  
+    safe_gene_name <- substr(gsub("[^[:alnum:]_]", "_", as.character(final_res[i, "gene_name"])), 1, 15)
+    safe_approved_name <- substr(gsub("[^[:alnum:]_]", "_", as.character(final_res[i, "Approved.name"])), 1, 15)
+
+    # Ensure output directory exists
+    output_dir <- file.path(getwd(), "normalizedCounts_DEGs_filtered")
+    if (!dir.exists(output_dir)) {
+      dir.create(output_dir, recursive = TRUE)
+    }
+    
+    # Plot based on availability of Approved.name
+    if (is.na(final_res[i, "Approved.name"]) == TRUE) {
+      ggplot(geneCounts, aes(x = Drug, y = count, color = Drug)) +
+        geom_point(position = position_jitter(w = 0.1, h = 0), size = 3) +
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+              panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+        ggtitle(paste0(gene_id, " normalized counts")) +
+        geom_text_repel(aes(label = sampleName), color = "black") +
+        ylab("Normalized counts") +
+        labs(subtitle = paste0("log2FC= ", final_res[i, "log2FoldChange"], " , padj=", final_res[i, "padj"]))
+      
+      tryCatch({
+        ggsave(file.path(output_dir, paste0(i, "-", safe_gene_id, ".png")),
+               plot = last_plot(), device = "png", dpi = 300)
+      }, error = function(e) {
+        cat("Error saving file for gene:", gene_id, "\n")
+        cat("Error message:", e$message, "\n")
+      })
+      
+    } else {
+      ggplot(geneCounts, aes(x = Drug, y = count, color = Drug)) +
+        geom_point(position = position_jitter(w = 0.1, h = 0), size = 3) +
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+              panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+        ggtitle(paste0(final_res[i, "gene_name"], ": ", final_res[i, "Approved.name"], " normalized counts")) +
+        geom_text_repel(aes(label = sampleName), color = "black") +
+        ylab("Normalized counts") +
+        labs(subtitle = paste0("log2FC= ", final_res[i, "log2FoldChange"], ", padj=", final_res[i, "padj"]))
+      
+      tryCatch({
+        ggsave(file.path(output_dir, paste0(i, "-", safe_gene_name, "-", safe_approved_name, ".png")),
+               plot = last_plot(), device = "png", dpi = 300)
+      }, error = function(e) {
+        cat("Error saving file for gene:", final_res[i, "gene_name"], "\n")
+        cat("Error message:", e$message, "\n")
+      })
+    }
+  } else {
+    cat("Gene ID", gene_id, "not found in dds\n")
+    next  # Skip to the next iteration
+  }
+}
+
+```
+
+
+```{r}
+#now we need the normalized counts
+normalized_counts <- counts(dds,normalized=TRUE) %>%
+  data.frame() %>%
+  rownames_to_column(var="gene_id")
+#get the n most sig DEGs by padj
+#https://github.com/hbctraining/DGE_workshop/blob/master/lessons/06_DGE_visualizing_results.md
+n<-nrow(final_res)
+topNDEGs<-final_res %>%
+  #arrange(padj) %>%
+  arrange(desc(abs(log2FoldChange)))%>%
+  pull(gene_id) %>%
+  head(n)
+#get the normalized counts for the  sig DEGs
+topNDEGs_counts<-normalized_counts %>%
+  filter(gene_id %in% topNDEGs)%>%
+  column_to_rownames(var="gene_id")
+meta <- coldata%>%
+  rownames_to_column(var="sampleName") %>%
+  as_tibble()
+```
+
+```{r}
+#make a heat map based on normalized counts of the top 300 DEGs based on lfc
+library(pheatmap)
+annotation <- meta %>%
+  dplyr::select(sampleName,Drug) %>%
+  data.frame(row.names = "sampleName")
+rownames(annotation)<-colnames(normalized_counts)[2:ncol(normalized_counts)]
+#color palette
+library(RColorBrewer)
+heat_colors <- brewer.pal(6, "YlGnBu")
+#THIS IS A HEAT MAP OF Z-SCORES OF NORMALIZED COUNTS!!
+pheatmap(topNDEGs_counts,
+         color = heat_colors,
+         cluster_rows = T, 
+         show_rownames = F,
+         annotation = annotation, 
+         border_color = NA, 
+         fontsize = 10, 
+         scale = "row", 
+         fontsize_row = 10, 
+         height = 20)
+
+#don't need these variables anymore
+rm(normalized_counts,n,topNDEGs,topNDEGs_counts,meta,annotation,heat_colors)
+
+```
+
+```{r}
+###################################### gene ontology ######################################################## Get gene IDs of filtered count matrix (genes tested in DE)
+tested_gene_ids <- rownames(countdata)
+
+# Filter the gencode genes to only include those tested in DE
+all_genes <- gencode_genes %>%
+  filter(gene_id %in% tested_gene_ids) %>%
+  pull(gene_id) %>%
+  gsub("\\..*", "", .)  # Remove version numbers if present
+
+# Significant genes after DE analysis
+sig_genes <- gsub("\\..*", "", final_res$gene_id)
+
+
+library(clusterProfiler)
+#this is the Genome wide annotation for Human
+
+#BiocManager::install("org.Hs.eg.db") 
+library(org.Hs.eg.db)
+
+ego_all<-enrichGO(gene=sig_genes,
+                  universe=all_genes,
+                  keyType = "ENSEMBL",
+                  OrgDb = org.Hs.eg.db, 
+                  ont = "ALL",
+                  pAdjustMethod = "BH", 
+                  qvalueCutoff = 0.05, 
+                  readable = TRUE)
+cluster_summary_all<-data.frame(ego_all)
+#write.csv(cluster_summary_all,"geneOntology all DEGs issy asxl1 blood allSamples adjGender.csv")
+barplot(ego_all,showCategory = 20)
+#simplify similar concept terms
+ego_bp<-enrichGO(gene=sig_genes,
+                 universe=all_genes,
+                 keyType = "ENSEMBL",
+                 OrgDb = org.Hs.eg.db, 
+                 ont = "BP",
+                 pAdjustMethod = "BH", 
+                 qvalueCutoff = 0.05, 
+                 readable = TRUE)
+#https://guangchuangyu.github.io/2015/10/use-simplify-to-remove-redundancy-of-enriched-go-terms/
+ego_bp_simp<-clusterProfiler::simplify(x=ego_bp,cutoff=0.7,by="p.adjust",select_fun=min)
+summary_simp<-data.frame(ego_bp_simp)
+
+library(enrichplot)
+
+ego_bp_simp <- pairwise_termsim(ego_bp_simp)
+library("ggnewscale")
+emapplot(ego_bp_simp)
+barplot(ego_bp_simp,showCategory = 20)
+
+library(ggplot2)
+
+# Extract the data from the simplified GO terms
+go_data <- as.data.frame(ego_bp_simp)
+
+# Create a custom bar plot using ggplot2 for better control over aesthetics
+#ggplot(go_data, aes(x = reorder(Description, Count), y = Count, fill = p.adjust)) +
+ # geom_bar(stat = "identity") +
+ #  coord_flip() +  # Flip to have categories on the y-axis
+#  scale_fill_gradient(low = "blue", high = "red") +
+#  theme_minimal() + 
+#  theme(axis.text.y = element_text(size = 12),   # Adjust y-axis label size
+#        axis.text.x = element_text(size = 12, angle = 45, hjust = 1), # Adjust x-axis label size and angle
+#        axis.title = element_text(size = 14)) +  # Adjust title size
+#  labs(x = "GO Terms", y = "Gene Count", fill = "p.adjust")  # Set axis labels and legend title
+
+library(stringr)
+
+# Modify your ggplot code with wrapped labels
+ggplot(go_data, aes(x = reorder(Description, Count), y = Count, fill = p.adjust)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +  # Flip to have categories on the y-axis
+  scale_fill_gradient(low = "blue", high = "red") +
+  theme_minimal() + 
+  theme(axis.text.y = element_text(size = 10),   # Adjust y-axis label size
+        axis.text.x = element_text(size = 12, angle = 45, hjust = 1), # Adjust x-axis label size and angle
+        axis.title = element_text(size = 14)) +  # Adjust title size
+  labs(x = "GO Terms", y = "Gene Count", fill = "p.adjust")+   # Set axis labels and legend title
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 20))  # Wrap labels to max width of 20 characters
+
+#write.csv(summary,"simplified geneOntology all DEGs issy asxl1 blood allSamples adjGender.csv")
+
+# barplot(ego_bp,showCategory = 50)
+# dotplot(ego_bp,showCategory=20)
+# emapplot(ego_bp)
+# rm(all_genes,sig_genes,ego_all,cluster_summary_all,ego_bp)
+```
+```{r}
+########for homer motifs######
+final_res$ensembl_noVersion<-gsub("\\..*","",final_res$gene_id)
+rnaTxt<-data.frame(final_res[,15])
+#write.table(rnaTxt,"all_DEGs_issy_asxl1_blood.txt",sep="\t",quote=FALSE,row.names = FALSE,col.names = FALSE)
+up<-final_res[final_res$log2FoldChange>0,]
+rnaTxt<-data.frame(up[,15])
+#write.table(rnaTxt,"up_DEGs_issy_asxl1_blood.txt",sep="\t",quote=FALSE,row.names = FALSE,col.names = FALSE)
+down<-final_res[final_res$log2FoldChange<0,]
+rnaTxt<-data.frame(down[,15])
+#write.table(rnaTxt,"down_DEGs_issy_asxl1_blood.txt",sep="\t",quote=FALSE,row.names = FALSE,col.names = FALSE)
+```
+
+```{r}
+#########################volcano plot###############################################
+library(tidyverse)
+#column for if peak meets lfc and/or padj threshold
+res<-res %>% mutate(threshold = padj<0.05 & abs(log2FoldChange)>=0.58)
+#order everything from increasing padj and add a blank column to hold approved name
+res<-res %>% arrange(padj) %>% mutate(genelabels = "")
+#fill the top 30 genes with an approved name
+res$genelabels[1:30]<-as.character(res$gene_name[1:30])
+title<-"Differential expression, WM1119 vs DMSO (Control)"
+#this is a version of the volcano plot without gene names
+ggplot(res,aes(x=log2FoldChange,y=-log10(padj),color=factor(threshold)))+
+  geom_point()+
+  ggtitle(title) +
+  xlab("log2 fold change") + 
+  ylab("-log10 adjusted p-value") +
+  theme_bw()+
+  geom_hline(yintercept=1.301, linetype="dashed", 
+             color = "grey", size=1)+
+  geom_vline(xintercept=0.58, linetype="dashed", 
+             color = "grey", size=1)+
+  geom_vline(xintercept=-0.58, linetype="dashed", 
+             color = "grey", size=1)+
+  scale_color_manual(breaks = c("FALSE", "TRUE"),
+                     values=c("#0066CC", "#FF0000"))+
+  labs(color="padj<0.05 & abs(log2FC)>0.58")
+#if you get error: "Warning message: Removed 34954 rows containing missing values (geom_point)." it is because outliers will not have a padj
+
+
+#this is a version of the volcano plot where top 30 DEGs (by padj) are labeled with their names
+library(ggrepel)
+ggplot(res,aes(x=log2FoldChange,y=-log10(padj),color=factor(threshold)))+
+  geom_point()+
+  ggtitle(title) +
+  xlab("log2 fold change") + 
+  ylab("-log10 adjusted p-value") +
+  theme_bw()+
+  geom_hline(yintercept=1.301, linetype="dashed", 
+             color = "grey", size=1)+
+  geom_vline(xintercept=0.58, linetype="dashed", 
+             color = "grey", size=1)+
+  geom_vline(xintercept=-0.58, linetype="dashed", 
+             color = "grey", size=1)+
+  scale_color_manual(breaks = c("FALSE", "TRUE"),
+                     values=c("#0066CC", "#FF0000"))+
+  labs(color="padj<0.05 & abs(log2FC)>0.58")+
+  geom_text_repel(aes(label = genelabels),color="black")
+
+  
+```
 
