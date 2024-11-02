@@ -377,13 +377,36 @@ barplot(ego_bp_simp,showCategory = 20)
 
 library(ggplot2)
 
-# Extract the data from the simplified GO terms
+# Load necessary packages
+library(stringr)
+
 go_data <- as.data.frame(ego_bp_simp)
+
+# Wrap long GO term descriptions to fit within the plot
+go_data$Description <- str_wrap(go_data$Description, width = 20)  # Set to 20 for more compact wrapping
+
+# Create a custom bar plot using ggplot2 for better control over aesthetics
+ggplot(go_data, aes(x = reorder(Description, Count), y = Count, fill = p.adjust)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +  # Flip to have categories on the y-axis
+  scale_fill_gradient(low = "blue", high = "red") +
+  theme_minimal() + 
+  theme(
+    axis.text.y = element_text(size = 6),  # Make y-axis label size smaller to fit more labels
+    axis.text.x = element_text(size = 10, angle = 45, hjust = 1),  # Adjust x-axis label size and angle
+    axis.title = element_text(size = 12),  # Adjust title size for consistency
+    plot.margin = unit(c(1, 2, 1, 2), "cm")  # Add margin on the sides for better label space
+  ) +
+  labs(x = "GO Terms", y = "Gene Count", fill = "p.adjust") +  # Set axis labels and legend title
+  ggtitle("Gene Ontology Enrichment Analysis")  # Add a title for better context
+
+# Extract the data from the simplified GO terms
+#go_data <- as.data.frame(ego_bp_simp)
 
 # Create a custom bar plot using ggplot2 for better control over aesthetics
 #ggplot(go_data, aes(x = reorder(Description, Count), y = Count, fill = p.adjust)) +
- # geom_bar(stat = "identity") +
- #  coord_flip() +  # Flip to have categories on the y-axis
+#  geom_bar(stat = "identity") +
+#   coord_flip() +  # Flip to have categories on the y-axis
 #  scale_fill_gradient(low = "blue", high = "red") +
 #  theme_minimal() + 
 #  theme(axis.text.y = element_text(size = 12),   # Adjust y-axis label size
@@ -391,25 +414,10 @@ go_data <- as.data.frame(ego_bp_simp)
 #        axis.title = element_text(size = 14)) +  # Adjust title size
 #  labs(x = "GO Terms", y = "Gene Count", fill = "p.adjust")  # Set axis labels and legend title
 
-library(stringr)
 
-# Modify your ggplot code with wrapped labels
-ggplot(go_data, aes(x = reorder(Description, Count), y = Count, fill = p.adjust)) +
-  geom_bar(stat = "identity") +
-  coord_flip() +  # Flip to have categories on the y-axis
-  scale_fill_gradient(low = "blue", high = "red") +
-  theme_minimal() + 
-  theme(axis.text.y = element_text(size = 10),   # Adjust y-axis label size
-        axis.text.x = element_text(size = 12, angle = 45, hjust = 1), # Adjust x-axis label size and angle
-        axis.title = element_text(size = 14)) +  # Adjust title size
-  labs(x = "GO Terms", y = "Gene Count", fill = "p.adjust")+   # Set axis labels and legend title
-  scale_x_discrete(labels = function(x) str_wrap(x, width = 20))  # Wrap labels to max width of 20 characters
-
-#write.csv(summary,"simplified geneOntology all DEGs issy asxl1 blood allSamples adjGender.csv")
-
-# barplot(ego_bp,showCategory = 50)
-# dotplot(ego_bp,showCategory=20)
-# emapplot(ego_bp)
+barplot(ego_bp,showCategory = 10)
+dotplot(ego_bp,showCategory= 10)
+#emapplot(ego_bp)
 # rm(all_genes,sig_genes,ego_all,cluster_summary_all,ego_bp)
 ```
 ```{r}
